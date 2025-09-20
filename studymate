@@ -1,0 +1,65 @@
+# study_mate_app.py
+
+import streamlit as st
+from transformers import pipeline
+import PyPDF2
+import shap
+import numpy as np
+
+# ---------------- Backend (Model + Explainable AI) ---------------- #
+@st.cache_resource
+def load_model():
+    return pipeline("text-generation", model="ibm-granite/granite-3.3-2b-instruct")
+
+nlp_model = load_model()
+
+# Function to extract text from PDF
+def extract_text_from_pdf(uploaded_file):
+    reader = PyPDF2.PdfReader(uploaded_file)
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text() + "\n"
+    return text
+
+# Simple explainability using SHAP (for text tokens)
+def explain_answer(model, question, context):
+    explainer = shap.Explainer(lambda x: [model(x)[0]['generated_text']], np.array([question + context]))
+    shap_values = explainer([question + context])
+    return shap_values
+
+# ---------------- Frontend (Streamlit UI) ---------------- #
+st.set_page_config(page_title="📘 StudyMate - IBM Watson + Explainable AI", layout="wide")
+
+st.title("📘 StudyMate with IBM Watson + Explainable AI")
+st.markdown("Ask questions from your study material (PDFs) and get **answers with explainability**.")
+
+# File uploader
+uploaded_file = st.file_uploader("Upload a PDF file", type=["pdf"])
+
+if uploaded_file:
+    pdf_text = extract_text_from_pdf(uploaded_file)
+    st.success("✅ PDF uploaded and processed!")
+
+    question = st.text_input("Ask a question based on the PDF:")
+
+    if st.button("Get Answer"):
+        if question.strip() == "":
+            st.warning("Please enter a question.")
+        else:
+            # Generate answer
+            messages = [{"role": "user", "content": f"Answer based on this text:\n{pdf_text}\n\nQuestion: {question}"}]
+            result = nlp_model(messages, max_length=300, do_sample=True)
+            answer = result[0]["generated_text"]
+
+            st.subheader("📝 Answer")
+            st.write(answer)
+
+            # Explainability
+            with st.spinner("Generating explanation..."):
+                try:
+                    shap_values = explain_answer(nlp_model, question, pdf_text[:1000])  # limit text for speed
+                    st.subheader("🔎 Explainability (Important Words)")
+                    st_shap = shap.plots.text(shap_values[0], display=False)
+                    st.pyplot(st_shap.figure)
+                except Exception as e:
+                    st.error(f"Explainability not available: {e}")
